@@ -1,0 +1,35 @@
+# agent-server-secure.hcl
+# Data Persistence
+data_dir = "{{ consul_data_path }}"
+# Logging
+log_level = "DEBUG"
+# Enable service mesh
+connect {
+  enabled = true
+  ca_provider = "consul"
+  ca_config {
+    "LeafCertTTL"= "72h"
+    private_key = "{{ cert_key.content }}"
+    root_cert = "{{ cert.content }}"
+    "IntermediateCertTTL" = "8760h"
+  }
+}
+# Addresses and ports
+addresses {
+  grpc = "127.0.0.1"
+  https = "0.0.0.0"
+  dns = "0.0.0.0"
+}
+ports {
+  grpc_tls  = {{ consul_grpc_tls_port }}
+  grpc  = {{ consul_grpc_port }}
+  http  = {{ consul_http_port }}
+  https = {{ consul_https_port }}
+  dns   = {{ consul_dns_port }}
+}
+# DNS recursors
+recursors = ["{{ consul_dns_recursor }}"]
+# Disable script checks
+enable_script_checks = false
+# Enable local script checks
+enable_local_script_checks = true

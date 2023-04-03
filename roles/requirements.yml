@@ -1,0 +1,12 @@
+---
+collections:
+- source: https://github.com/prometheus-community/ansible.git
+  type: git
+  version: latest
+
+
+roles:
+- src: https://github.com/cloudalchemy/ansible-grafana.git
+  name: cloudalchemy.grafana
+  scm: git
+  version: 0.17.0

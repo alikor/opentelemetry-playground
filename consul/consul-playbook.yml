@@ -1,0 +1,298 @@
+---
+- name: install Consul
+  hosts: all
+  become: yes
+  vars:
+    consul_version: "1.15.1" # Replace with desired Consul version
+    consul_group_name: "consul"
+    consul_user_name: "consul"
+    consul_user_uid: "32768"
+    consul_user_password: "consul"
+    consul_user_comment: "consul proxy user"
+    consul_user_home: "/home/consul"
+    consul_user_shell: "/bin/bash"
+    consul_user_createhome: true
+    consul_user_system: true
+
+    consul_data_path: "/var/lib/consul"
+    consul_log_path: "/var/log/consul"
+    consul_run_path: "/var/run/consul"
+    consul_binary: "/usr/local/bin/consul"
+    consul_syslog_enable: false
+    consul_tls_dir: "/etc/consul/ssl"
+    consul_config_dir: "/etc/consul.d"
+    consul_tokens_dir: "/etc/consul.d/tokens"
+
+    consul_user: "{{ consul_user_name }}"
+
+    consul_server: true
+    consul_grpc_tls_port: 8503
+    consul_grpc_port: 8502
+    consul_http_port: 8500
+    consul_https_port: 8443
+    consul_dns_port: 8600
+    consul_dns_recursor: "1.1.1.1"
+
+    consul_datacenter: "dc1"
+    consul_ui_config_enable: true
+    consul_domain: "consul"
+    consul_node_name: "{{ ansible_hostname }}"
+    consul_node_role: "server"
+    consul_node_address: "{{ ansible_default_ipv4.address }}"
+    # consul_node_meta: "env:dev"
+    # consul_node_tag: "consul"
+    # consul_node_tag: "server"
+    # consul_node_tag: "dev"
+    # consul_node_tag: "us-east-1"
+
+    download_file: false
+
+  tasks:
+    - name: Install dependencies
+      apt:
+        name: ["unzip", "jq"]
+        state: present  
+
+    - name: Create consul group
+      group:
+        name: "{{ consul_group_name }}"
+        state: present
+    
+    - name: Create consul user
+      user:
+        name: "{{consul_user_name}}"
+        comment: "{{ consul_user_comment }}"
+        system: "{{consul_user_system}}"
+        password: "{{ consul_user_password | password_hash('sha512') }}"
+        createhome: "{{ consul_user_createhome }}"
+        home: "{{ consul_user_home }}"
+        shell: "{{ consul_user_shell }}"
+        group: "{{ consul_group_name }}"
+        uid: "{{ consul_user_uid }}"
+
+    - name: Add consul user to sudoers
+      become_method: sudo
+      lineinfile:
+        path: "/etc/sudoers"
+        line: "{{ consul_user }} ALL=(ALL) NOPASSWD:ALL"
+        validate: "visudo -cf %s"
+        state: present
+        create: yes
+        owner: root
+        group: root
+        mode: "0440"
+
+    - name: Download Consul binary
+      # when: false
+      get_url:
+        url: https://releases.hashicorp.com/consul/{{ consul_version }}/consul_{{ consul_version }}_linux_386.zip
+        dest: /tmp/consul_{{ consul_version }}_linux_386.zip
+      register: envoy_download
+    
+    - name: Extract Consul binary
+      # when: false
+      unarchive:
+        src: "/tmp/consul_{{ consul_version }}_linux_386.zip"
+        dest: /usr/local/bin
+        copy: no
+        creates: "{{ consul_binary }}"
+
+    - name: Make Consul binary executable
+      file:
+        path: "{{ consul_binary }}"
+        mode: 0777
+
+    - name: Creates consol config directory
+      file:
+        path: "{{ consul_config_dir }}"
+        state: directory
+
+    - name: Creates consol config certs directory
+      file:
+        path: "{{ consul_config_dir }}/certs"
+        state: directory
+
+    - name: Creates consol tokens directory
+      file:
+        path: "{{ consul_tokens_dir }}"
+        state: directory
+
+    - name: Creates consol data directory
+      file:
+        path: "{{ consul_data_path }}"
+        group: "{{ consul_group_name }}"
+        owner: "{{ consul_user_name }}"
+        state: directory
+
+    - name: Create CA for Consul datacenter
+      ansible.builtin.shell: consul tls ca create -domain={{ consul_domain }}
+      run_once: true
+      args:
+        creates: "{{ consul_config_dir }}/certs/{{ consul_domain }}-agent-ca.pem"
+        chdir: "{{ consul_config_dir }}/certs"
+        executable: /bin/bash
+
+    - name: Create server Certificate and key pair
+      ansible.builtin.shell: consul tls cert create -server -domain {{consul_domain}} -dc={{ consul_datacenter }}
+      run_once: true
+      args:
+        creates: "{{ consul_config_dir }}/certs/{{ consul_datacenter }}-server-{{ consul_domain }}-0.pem"
+        chdir: "{{ consul_config_dir }}/certs"
+        executable: /bin/bash
+
+    - name: Create client Certificate and key pair
+      run_once: true
+      ansible.builtin.slurp:
+        src: "{{ consul_config_dir }}/certs/{{ consul_domain }}-agent-ca-key.pem"
+      register: cert_key
+
+    - name: Create client Certificate
+      run_once: true
+      ansible.builtin.slurp:
+        src: "{{ consul_config_dir }}/certs/{{ consul_domain }}-agent-ca.pem"
+      register: cert
+
+    - name: Create agent-server-specific.hcl file
+      run_once: true
+      template:
+        src: agent-server-specific.hcl.j2
+        dest: "{{ consul_config_dir }}/agent-server-specific.hcl"
+
+    - name: Create agent-server-secure.hcl file
+      run_once: true
+      template:
+        src: agent-server-secure.hcl.j2
+        dest: "{{ consul_config_dir }}/agent-server-secure.hcl"
+
+    - name: Create agent-server-secure.hcl file
+      run_once: true
+      ansible.builtin.shell: echo encrypt = \"$(consul keygen)\" > {{consul_config_dir}}/agent-gossip-encryption.hcl
+      args:
+        creates: "{{ consul_config_dir }}/agent-gossip-encryption.hcl"
+        chdir: "{{ consul_config_dir }}"
+        executable: /bin/bash
+
+    - name: Create agent-server-tls.hcl file
+      run_once: true
+      template:
+        src: agent-server-tls.hcl.j2
+        dest: "{{ consul_config_dir }}/agent-server-tls.hcl"
+
+    - name: Create agent-server-acl.hcl file
+      run_once: true
+      template:
+        src: agent-server-acl.hcl.j2
+        dest: "{{ consul_config_dir }}/agent-server-acl.hcl"
+
+    - name: Validate consul configuration
+      command: consul validate {{ consul_config_dir }}
+
+    - name: Create Consul systemd service file
+      copy:
+        content: |
+          [Unit]
+          Description=Consul Service
+          After=network.target
+
+          [Service]
+          User={{ consul_user }}
+          ExecStart=/usr/bin/sudo {{ consul_binary }} agent -config-dir={{ consul_config_dir }}
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/consul.service
+
+    - name: Start Consul service
+      systemd:
+        name: consul
+        state: started
+        enabled: true
+
+    - name: Create acl bootstrap token
+      run_once: true
+      ansible.builtin.shell: /usr/bin/sudo {{ consul_binary }} acl bootstrap --format json > ./acl-token-bootstrap.json
+      args:
+        creates: "{{ consul_tokens_dir }}/acl-token-bootstrap.json"
+        chdir: "{{ consul_tokens_dir }}"
+        executable: /bin/bash
+      register: bootstrap
+
+    - name: Define aacl-policy-dns.hcl policy file
+      run_once: true
+      template:
+        src: acl-policy-dns.hcl.j2
+        dest: "/tmp/acl-policy-dns.hcl"
+      register: aclpolicydns
+
+
+    - name: Create acl-policy-dns policy
+      run_once: true
+      ansible.builtin.shell: |
+        export CONSUL_HTTP_TOKEN=`cat {{ consul_tokens_dir }}/acl-token-bootstrap.json | jq -r ".SecretID"`
+        {{ consul_binary }} acl policy create -name 'acl-policy-dns' -description 'Policy for DNS endpoints' -rules @/tmp/acl-policy-dns.hcl
+      args:
+        chdir: "/tmp"
+        executable: /bin/bash
+      when: aclpolicydns.changed
+      register: aclpolicydnspolicy
+
+    - name: Create acl-policy-dns token file
+      run_once: true
+      ansible.builtin.shell: |
+        export CONSUL_HTTP_TOKEN=`cat {{ consul_tokens_dir }}/acl-token-bootstrap.json | jq -r ".SecretID"`
+        touch {{ consul_tokens_dir }}/acl-token-dns.json
+        consul acl token create -description "DNS - Default token" -policy-name "acl-policy-dns" --format json > {{ consul_tokens_dir }}/acl-token-dns.json
+      args:
+        creates: "{{ consul_tokens_dir }}/acl-token-dns.json"
+        chdir: "/{{ consul_tokens_dir }}"
+        executable: /bin/bash
+      when: aclpolicydnspolicy.changed
+
+    - name: Create acl-policy-server-node.hcl file
+      run_once: true
+      template:
+        src: acl-policy-server-node.hcl.j2
+        dest: "/tmp/acl-policy-server-node.hcl"
+      register: aclpolicyservernode
+
+    - name: Create acl-policy-server-node policy
+      run_once: true
+      ansible.builtin.shell: |
+        export CONSUL_HTTP_TOKEN=`cat {{ consul_tokens_dir }}/acl-token-bootstrap.json | jq -r ".SecretID"`
+        {{ consul_binary }} acl policy create -name 'acl-policy-server-node' -description 'Policy for Server nodes' -rules @/tmp/acl-policy-server-node.hcl
+      args:
+        chdir: "/tmp"
+        executable: /bin/bash
+      when: aclpolicyservernode.changed
+      register: aclpolicyservernodepolicy
+
+    - name: Create acl-policy-server-node token file
+      run_once: true
+      ansible.builtin.shell: |
+        export CONSUL_HTTP_TOKEN=`cat {{ consul_tokens_dir }}/acl-token-bootstrap.json | jq -r ".SecretID"`
+        touch {{ consul_tokens_dir }}/server-acl-token.json
+        {{ consul_binary }} acl token create -description "server agent token" -policy-name acl-policy-server-node  --format json > {{ consul_tokens_dir }}/server-acl-token.json
+      args:
+        creates: "{{ consul_tokens_dir }}/server-acl-token.json"
+        chdir: "/{{ consul_tokens_dir }}"
+        executable: /bin/bash
+      when: aclpolicyservernodepolicy.changed
+
+
+# make extract handler
+        
+    # - name: Grant user Joe read access to a file
+    #   ansible.posix.acl:
+    #     path: /usr/local/bin/envoy
+    #     entity: envoy
+    #     etype: user
+    #     permissions: rwx
+    #     state: present
+
+
+    # - name: Start Envoy service
+    #   systemd:
+    #     name: envoy
+    #     state: started
+    #     enabled: true

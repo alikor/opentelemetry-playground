@@ -1,0 +1,72 @@
+---
+  - name: Playbook
+    hosts: vm1,vm2
+    become: yes
+    become_user: root
+    any_errors_fatal: false
+    vars:
+      consul_version: "1.10.2"
+      consul_group_name: all
+      consul_user_name: all
+      consul_datacenter: "dc1"
+    tasks:
+      - name: Install dependencies
+        apt:
+          name: ["openjdk-17-jre"]
+          state: present
+      - name: get hostname
+        ansible.builtin.shell: hostname
+
+      - name: Create EchoService systemd service file
+        when: ansible_hostname == "vm2"
+        copy:
+          content: |
+            [Unit]
+            Description=Echo Service
+            After=network.target
+
+            [Service]
+            ExecStart=java -jar /vagrant/echo/target/echo-0.0.1-SNAPSHOT.jar
+            Restart=always
+
+            [Install]
+            WantedBy=multi-user.target
+          dest: /etc/systemd/system/DemoEchoService.service
+      - name: Start Echo service
+        when: ansible_hostname == "vm2"
+        systemd:
+          name: DemoEchoService
+          state: started
+          enabled: true
+
+      - name: Another symbolic mode example, adding some permissions and removing others
+        ansible.builtin.copy:
+          src: ./hello/target/hello-0.0.1-SNAPSHOT.jar
+          dest: /vagrant/hello-0.0.1-SNAPSHOT.jar
+          owner: vagrant
+          group: vagrant
+          mode: u+rw,g-wx,o-rwx
+
+      - name: Create helloService systemd service file
+        when: ansible_hostname == "vm1"
+        copy:
+          content: |
+            [Unit]
+            Description=Hello Service
+            After=network.target
+
+            [Service]
+            ExecStart=java -jar /vagrant/hello-0.0.1-SNAPSHOT.jar
+            Restart=always
+
+            [Install]
+            WantedBy=multi-user.target
+          dest: /etc/systemd/system/DemoHelloService.service
+
+      - name: Start Hello service
+        when: ansible_hostname == "vm1"
+        systemd:
+          name: DemoHelloService
+          state: started
+          enabled: true
+

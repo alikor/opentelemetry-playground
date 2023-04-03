@@ -1,0 +1,38 @@
+---
+- name: Setup OpenTelemetry Java Agent and Prometheus Exporter
+  hosts: all
+  become: yes
+  tasks:
+    - name: Download OpenTelemetry Java agent
+      get_url:
+        url: https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/latest/download/opentelemetry-javaagent.jar
+        dest: /opt/opentelemetry-javaagent.jar
+        mode: '0644'
+
+    - name: Get list of running systemd services
+      shell: systemctl list-units --type=service --state=running --no-pager --no-legend | awk '{print $1}'
+      register: systemd_services
+
+    - name: Set environment variable for each running service      
+      become: true
+      ini_file:
+        path: "/etc/systemd/system/{{ item }}"
+        no_extra_spaces: true
+        section: Service
+        option: Environment
+        value: "\"JAVA_TOOL_OPTIONS=-javaagent:/opt/opentelemetry-javaagent.jar -Dotel.metrics.exporter=prometheus\""
+      with_items: "{{ systemd_services.stdout_lines }}"
+      when: item.startswith('Demo')
+
+    - name: reload systemd
+      become: true
+      systemd:
+        daemon_reload: yes
+
+    - name: restart each systemd_services
+      become: true
+      systemd:
+        name: "{{ item }}"
+        state: restarted
+      with_items: "{{ systemd_services.stdout_lines }}"
+      when: item.startswith('Demo')

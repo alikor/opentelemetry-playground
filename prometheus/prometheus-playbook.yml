@@ -1,0 +1,19 @@
+---
+- name: Deploy Prometheus
+  hosts: vm3
+  become: true
+  collections:
+    - prometheus
+  roles:
+    - prometheus.prometheus.prometheus
+  vars_files:
+    - group_vars/prometheus.yml
+
+
+- name: Deploy Prometheus
+  hosts: vm3
+  become: true
+  roles:
+    - cloudalchemy.grafana
+  vars_files:
+    - group_vars/grafana.yml

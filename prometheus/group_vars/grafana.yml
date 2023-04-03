@@ -1,0 +1,11 @@
+---
+grafana_security:
+  admin_user: admin
+  admin_password: mysecurepassword
+
+grafana_datasources:
+  - name: prometheus
+    type: prometheus
+    access: proxy
+    url: http://vm3:9090
+    isDefault: true

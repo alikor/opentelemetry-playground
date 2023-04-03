@@ -1,0 +1,14 @@
+---
+
+prometheus_targets:
+  node:
+  - targets:
+    - vm2:9464
+    labels:
+      env: demo
+      job: EchoService
+  - targets:
+    - vm1:9464
+    labels:
+      env: demo
+      job: helloService

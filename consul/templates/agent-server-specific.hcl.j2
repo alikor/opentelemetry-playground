@@ -1,0 +1,11 @@
+## Server specific configuration for {{consul_datacenter}}
+server = true
+bind_addr =  "{{ansible_default_ipv4.address}}"
+advertise_addr =  "{{ansible_default_ipv4.address}}"
+bootstrap_expect = 1
+datacenter = "{{consul_datacenter}}"
+client_addr = "127.0.0.1"
+## UI configuration (1.9+)
+ui_config {
+  enabled = true
+}
